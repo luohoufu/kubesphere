@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright 2021 The KubeSphere Authors.
+# Copyright 2014 The Kubernetes Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,24 +23,22 @@ set -o pipefail
 KUBE_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
 source "${KUBE_ROOT}/hack/lib/init.sh"
 
-kube::golang::verify_go_version
+kube::golang::setup_env
 
 cd "${KUBE_ROOT}"
 
-find_files() {
-  find . -not \( \
-      \( \
-        -wholename './output' \
-        -o -wholename './.git' \
-        -o -wholename './_output' \
-        -o -wholename './_gopath' \
-        -o -wholename './release' \
-        -o -wholename './target' \
-        -o -wholename '*/third_party/*' \
-        -o -wholename '*/vendor/*' \
-        -o -wholename './staging/src/kubesphere.io/client-go/*vendor/*' \
-      \) -prune \
-    \) -name '*.go'
+function git_find() {
+    # Similar to find but faster and easier to understand.  We want to include
+    # modified and untracked files because this might be running against code
+    # which is not tracked by git yet.
+    git ls-files -cmo --exclude-standard \
+        ':!:vendor/*'        `# catches vendor/...` \
+        ':!:*/vendor/*'      `# catches any subdir/vendor/...` \
+        ':!:third_party/*'   `# catches third_party/...` \
+        ':!:*/third_party/*' `# catches third_party/...` \
+        ':!:*/testdata/*'    `# catches any subdir/testdata/...` \
+        ':(glob)**/*.go' \
+        "$@"
 }
 
-find_files | xargs gofmt -s -w
+git_find -z | xargs -0 gofmt -s -w

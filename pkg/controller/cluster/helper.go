@@ -1,65 +1,117 @@
 /*
-Copyright 2020 KubeSphere Authors
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
 
 package cluster
 
 import (
-	"io/ioutil"
+	"context"
+	"fmt"
+	"os"
+	"path"
 
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/clientcmd/api"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
+	clusterv1alpha1 "kubesphere.io/api/cluster/v1alpha1"
+	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
+
+	"kubesphere.io/kubesphere/pkg/config"
+	"kubesphere.io/kubesphere/pkg/constants"
+	"kubesphere.io/kubesphere/pkg/utils/hashutil"
 )
 
-func buildKubeconfigFromRestConfig(config *rest.Config) ([]byte, error) {
-	apiConfig := api.NewConfig()
+const releaseName = "ks-core"
 
-	apiCluster := &api.Cluster{
-		Server:                   config.Host,
-		CertificateAuthorityData: config.CAData,
+func configChanged(cluster *clusterv1alpha1.Cluster) bool {
+	return hashutil.FNVString(cluster.Spec.Config) != cluster.Annotations[constants.ConfigHashAnnotation]
+}
+
+func setConfigHash(cluster *clusterv1alpha1.Cluster) {
+	configHash := hashutil.FNVString(cluster.Spec.Config)
+	if cluster.Annotations == nil {
+		cluster.Annotations = map[string]string{
+			constants.ConfigHashAnnotation: configHash,
+		}
+	} else {
+		cluster.Annotations[constants.ConfigHashAnnotation] = configHash
 	}
+}
 
-	// generated kubeconfig will be used by cluster federation, CAFile is not
-	// accepted by kubefed, so we need read CAFile
-	if len(apiCluster.CertificateAuthorityData) == 0 && len(config.CAFile) != 0 {
-		caData, err := ioutil.ReadFile(config.CAFile)
-		if err != nil {
+func getKubeSphereConfig(ctx context.Context, client runtimeclient.Client) (*config.Config, error) {
+	cm := &corev1.ConfigMap{}
+	if err := client.Get(ctx, types.NamespacedName{Name: constants.KubeSphereConfigName, Namespace: constants.KubeSphereNamespace}, cm); err != nil {
+		return nil, err
+	}
+	configData, err := config.FromConfigMap(cm)
+	if err != nil {
+		return nil, err
+	}
+	return configData, nil
+}
+
+// generateChartValueBytes generates the chart value bytes for the cluster
+func generateChartValueBytes(chartConfig []byte, jwtSecret string) ([]byte, error) {
+	values := make(map[string]interface{})
+	if chartConfig != nil {
+		if err := yaml.Unmarshal(chartConfig, &values); err != nil {
 			return nil, err
 		}
-
-		apiCluster.CertificateAuthorityData = caData
 	}
 
-	apiConfig.Clusters["kubernetes"] = apiCluster
-
-	apiConfig.AuthInfos["kubernetes-admin"] = &api.AuthInfo{
-		ClientCertificateData: config.CertData,
-		ClientKeyData:         config.KeyData,
-		Token:                 config.BearerToken,
-		TokenFile:             config.BearerTokenFile,
-		Username:              config.Username,
-		Password:              config.Password,
+	// Override some necessary values
+	values["role"] = "member"
+	values["multicluster"] = map[string]string{"role": "member"}
+	// disable upgrade to prevent execution of kse-upgrade
+	values["upgrade"] = map[string]interface{}{
+		"enabled": false,
+	}
+	if err := unstructured.SetNestedField(values, jwtSecret, "authentication", "issuer", "jwtSecret"); err != nil {
+		return nil, err
 	}
 
-	apiConfig.Contexts["kubernetes-admin@kubernetes"] = &api.Context{
-		Cluster:  "kubernetes",
-		AuthInfo: "kubernetes-admin",
+	valuesBytes, err := yaml.Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal values: %v", err)
+	}
+	return valuesBytes, nil
+}
+
+func getChartBytes(chartPath string) ([]byte, error) {
+	prefix := "/var/helm-charts"
+	if chartPath == "" {
+		chartPath = path.Join(prefix, releaseName)
 	}
 
-	apiConfig.CurrentContext = "kubernetes-admin@kubernetes"
+	tgzFile := path.Join(prefix, fmt.Sprintf("%s.tgz", releaseName))
+	if _, err := os.Stat(tgzFile); os.IsNotExist(err) {
+		chart, err := loader.Load(chartPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load chart: %v", err)
+		}
 
-	return clientcmd.Write(*apiConfig)
+		saveFile, err := chartutil.Save(chart, prefix)
+		if err != nil {
+			return nil, fmt.Errorf("failed to save chart: %v", err)
+		}
+
+		klog.Infof("saveFile %s, tgzFile %s", saveFile, tgzFile)
+		if saveFile != tgzFile {
+			if err := os.Rename(saveFile, tgzFile); err != nil {
+				return nil, fmt.Errorf("failed to rename chart file: %v", err)
+			}
+		}
+	}
+
+	chartBytes, err := os.ReadFile(tgzFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read chart files: %v", err)
+	}
+	return chartBytes, nil
 }

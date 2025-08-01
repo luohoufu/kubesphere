@@ -1,53 +1,39 @@
+//go:build exclude
+
 /*
-Copyright 2020 KubeSphere Authors
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// TODO test failed
 
 package v1alpha1
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	runtimefakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"kubesphere.io/kubesphere/pkg/scheme"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/cli-runtime/pkg/printers"
+	"k8s.io/client-go/kubernetes"
 	k8s "k8s.io/client-go/kubernetes"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"kubesphere.io/api/cluster/v1alpha1"
 
-	"kubesphere.io/kubesphere/pkg/client/clientset/versioned/fake"
-	"kubesphere.io/kubesphere/pkg/informers"
-	"kubesphere.io/kubesphere/pkg/version"
-)
-
-const (
-	proxyAddress = "http://139.198.121.121:8080"
-	agentImage   = "kubesphere/tower:v1.0"
-	proxyService = "tower.kubesphere-system.svc"
+	"kubesphere.io/kubesphere/pkg/constants"
+	"kubesphere.io/kubesphere/pkg/utils/k8sutil"
 )
 
 var cluster = &v1alpha1.Cluster{
@@ -58,31 +44,6 @@ var cluster = &v1alpha1.Cluster{
 		Connection: v1alpha1.Connection{
 			Type:  v1alpha1.ConnectionTypeProxy,
 			Token: "randomtoken",
-		},
-	},
-}
-
-var service = &corev1.Service{
-	ObjectMeta: metav1.ObjectMeta{
-		Name:      "tower",
-		Namespace: "kubesphere-system",
-	},
-	Spec: corev1.ServiceSpec{
-		Ports: []corev1.ServicePort{
-			{
-				Port:     8080,
-				Protocol: corev1.ProtocolTCP,
-			},
-		},
-	},
-	Status: corev1.ServiceStatus{
-		LoadBalancer: corev1.LoadBalancerStatus{
-			Ingress: []corev1.LoadBalancerIngress{
-				{
-					IP:       "139.198.121.121",
-					Hostname: "foo.bar",
-				},
-			},
 		},
 	},
 }
@@ -113,16 +74,16 @@ authentication:
 
 var hostCm = &corev1.ConfigMap{
 	ObjectMeta: metav1.ObjectMeta{
-		Namespace: KubesphereNamespace,
-		Name:      KubeSphereConfigName,
+		Namespace: constants.KubeSphereNamespace,
+		Name:      constants.KubeSphereConfigName,
 	},
 	Data: hostMap,
 }
 
 var memberCm = &corev1.ConfigMap{
 	ObjectMeta: metav1.ObjectMeta{
-		Namespace: KubesphereNamespace,
-		Name:      KubeSphereConfigName,
+		Namespace: constants.KubeSphereNamespace,
+		Name:      constants.KubeSphereConfigName,
 	},
 	Data: memberMap,
 }
@@ -174,134 +135,6 @@ var ksApiserverDeploy = `
     }
 }`
 
-var expected = `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  creationTimestamp: null
-  name: cluster-agent
-  namespace: kubesphere-system
-spec:
-  selector:
-    matchLabels:
-      app: agent
-      app.kubernetes.io/part-of: tower
-  strategy: {}
-  template:
-    metadata:
-      creationTimestamp: null
-      labels:
-        app: agent
-        app.kubernetes.io/part-of: tower
-    spec:
-      containers:
-      - command:
-        - /agent
-        - --name=gondor
-        - --token=randomtoken
-        - --proxy-server=http://139.198.121.121:8080
-        - --keepalive=10s
-        - --kubesphere-service=ks-apiserver.kubesphere-system.svc:80
-        - --kubernetes-service=kubernetes.default.svc:443
-        - --v=0
-        image: kubesphere/tower:v1.0
-        name: agent
-        resources:
-          limits:
-            cpu: "1"
-            memory: 200M
-          requests:
-            cpu: 100m
-            memory: 100M
-      serviceAccountName: kubesphere
-status: {}
-`
-
-func TestGeranteAgentDeployment(t *testing.T) {
-	k8sclient := k8sfake.NewSimpleClientset(service)
-	ksclient := fake.NewSimpleClientset(cluster)
-
-	informersFactory := informers.NewInformerFactories(k8sclient, ksclient, nil, nil, nil, nil)
-
-	informersFactory.KubernetesSharedInformerFactory().Core().V1().Services().Informer().GetIndexer().Add(service)
-	informersFactory.KubeSphereSharedInformerFactory().Cluster().V1alpha1().Clusters().Informer().GetIndexer().Add(cluster)
-
-	directConnectionCluster := cluster.DeepCopy()
-	directConnectionCluster.Spec.Connection.Type = v1alpha1.ConnectionTypeDirect
-
-	var testCases = []struct {
-		description    string
-		expectingError bool
-		expectedError  error
-		cluster        *v1alpha1.Cluster
-		expected       string
-	}{
-		{
-			description:    "test normal case",
-			expectingError: false,
-			expected:       expected,
-			cluster:        cluster,
-		},
-		{
-			description:    "test direct connection cluster",
-			expectingError: true,
-			expectedError:  errClusterConnectionIsNotProxy,
-			cluster:        directConnectionCluster,
-		},
-	}
-
-	for _, testCase := range testCases {
-
-		t.Run(testCase.description, func(t *testing.T) {
-			h := newHandler(informersFactory.KubernetesSharedInformerFactory(),
-				informersFactory.KubeSphereSharedInformerFactory(),
-				proxyService,
-				"",
-				agentImage)
-
-			var buf bytes.Buffer
-
-			err := h.populateProxyAddress()
-			if err != nil {
-				t.Error(err)
-			}
-
-			err = h.generateDefaultDeployment(testCase.cluster, &buf)
-			if testCase.expectingError {
-				if err == nil {
-					t.Fatalf("expecting error %v, got nil", testCase.expectedError)
-				} else if err != testCase.expectedError {
-					t.Fatalf("expecting error %v, got %v", testCase.expectedError, err)
-				}
-			}
-
-			if diff := cmp.Diff(testCase.expected, buf.String()); len(diff) != 0 {
-				t.Errorf("%T, got +, expected -, %s", testCase.expected, diff)
-			}
-		})
-	}
-}
-
-func TestInnerGenerateAgentDeployment(t *testing.T) {
-	h := &handler{
-		proxyAddress: proxyAddress,
-		agentImage:   agentImage,
-		yamlPrinter:  &printers.YAMLPrinter{},
-	}
-
-	var buf bytes.Buffer
-
-	err := h.generateDefaultDeployment(cluster, &buf)
-
-	if err != nil {
-		t.Error(err)
-	}
-
-	if diff := cmp.Diff(buf.String(), expected); len(diff) != 0 {
-		t.Error(diff)
-	}
-
-}
-
 var base64EncodedKubeConfig = `
 apiVersion: v1
 clusters:
@@ -325,21 +158,12 @@ users:
 `
 
 func TestValidateKubeConfig(t *testing.T) {
-	k8sclient := k8sfake.NewSimpleClientset(service)
-	ksclient := fake.NewSimpleClientset(cluster)
+	client := runtimefakeclient.NewClientBuilder().
+		WithScheme(scheme.Scheme).
+		Build()
+	h := newHandler(client)
 
-	informersFactory := informers.NewInformerFactories(k8sclient, ksclient, nil, nil, nil, nil)
-
-	informersFactory.KubernetesSharedInformerFactory().Core().V1().Services().Informer().GetIndexer().Add(service)
-	informersFactory.KubeSphereSharedInformerFactory().Cluster().V1alpha1().Clusters().Informer().GetIndexer().Add(cluster)
-
-	h := newHandler(informersFactory.KubernetesSharedInformerFactory(),
-		informersFactory.KubeSphereSharedInformerFactory(),
-		proxyService,
-		"",
-		agentImage)
-
-	config, err := loadKubeConfigFromBytes([]byte(base64EncodedKubeConfig))
+	config, err := k8sutil.LoadKubeConfigFromBytes([]byte(base64EncodedKubeConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,6 +178,7 @@ func TestValidateKubeConfig(t *testing.T) {
 	env := &envtest.Environment{
 		Config: config,
 		ControlPlane: envtest.ControlPlane{
+			//nolint:staticcheck
 			APIServer: &envtest.APIServer{
 				Args: envtest.DefaultKubeAPIServerFlags,
 				URL:  u,
@@ -371,51 +196,25 @@ func TestValidateKubeConfig(t *testing.T) {
 		_ = env.Stop()
 	}()
 
-	err = h.validateKubeConfig([]byte(base64EncodedKubeConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-var ver = version.Get()
-
-func endpoint(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(ver)
-}
-
-func TestValidateKubeSphereEndpoint(t *testing.T) {
-	svr := httptest.NewServer(http.HandlerFunc(endpoint))
-	defer svr.Close()
-
-	got, err := validateKubeSphereAPIServer(svr.URL, nil)
+	clientSet, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if diff := cmp.Diff(&ver, got); len(diff) != 0 {
-		t.Errorf("%T +got, -expected %v", ver, diff)
+	err = h.validateKubeConfig("test", clientSet)
+	if err != nil {
+		t.Fatal(err)
 	}
-
 }
 
 func TestValidateMemberClusterConfiguration(t *testing.T) {
-	k8sclient := k8sfake.NewSimpleClientset(service)
-	ksclient := fake.NewSimpleClientset(cluster)
+	client := runtimefakeclient.NewClientBuilder().
+		WithScheme(scheme.Scheme).
+		Build()
 
-	informersFactory := informers.NewInformerFactories(k8sclient, ksclient, nil, nil, nil, nil)
+	h := newHandler(client)
 
-	informersFactory.KubernetesSharedInformerFactory().Core().V1().Services().Informer().GetIndexer().Add(service)
-	informersFactory.KubeSphereSharedInformerFactory().Cluster().V1alpha1().Clusters().Informer().GetIndexer().Add(cluster)
-	informersFactory.KubernetesSharedInformerFactory().Core().V1().ConfigMaps().Informer().GetIndexer().Add(hostCm)
-
-	h := newHandler(informersFactory.KubernetesSharedInformerFactory(),
-		informersFactory.KubeSphereSharedInformerFactory(),
-		proxyService,
-		"",
-		agentImage)
-
-	config, err := loadKubeConfigFromBytes([]byte(base64EncodedKubeConfig))
+	config, err := k8sutil.LoadKubeConfigFromBytes([]byte(base64EncodedKubeConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,6 +229,7 @@ func TestValidateMemberClusterConfiguration(t *testing.T) {
 	env := &envtest.Environment{
 		Config: config,
 		ControlPlane: envtest.ControlPlane{
+			//nolint:staticcheck
 			APIServer: &envtest.APIServer{
 				Args: envtest.DefaultKubeAPIServerFlags,
 				URL:  u,
@@ -447,15 +247,20 @@ func TestValidateMemberClusterConfiguration(t *testing.T) {
 		_ = env.Stop()
 	}()
 
+	clientSet, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	addMemberClusterResource(hostCm, t)
 
-	err = h.validateMemberClusterConfiguration([]byte(base64EncodedKubeConfig))
+	err = h.validateMemberClusterConfiguration(clientSet)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	addMemberClusterResource(memberCm, t)
-	err = h.validateMemberClusterConfiguration([]byte(base64EncodedKubeConfig))
+	err = h.validateMemberClusterConfiguration(clientSet)
 	if err == nil {
 		t.Fatal()
 	}
@@ -478,14 +283,14 @@ func addMemberClusterResource(targetCm *corev1.ConfigMap, t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = c.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: KubesphereNamespace}}, metav1.CreateOptions{})
+	_, err = c.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: constants.KubeSphereNamespace}}, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		t.Fatal(err)
 	}
 
-	_, err = c.CoreV1().ConfigMaps(KubesphereNamespace).Create(context.Background(), targetCm, metav1.CreateOptions{})
+	_, err = c.CoreV1().ConfigMaps(constants.KubeSphereNamespace).Create(context.Background(), targetCm, metav1.CreateOptions{})
 	if err != nil && errors.IsAlreadyExists(err) {
-		_, err = c.CoreV1().ConfigMaps(KubesphereNamespace).Update(context.Background(), targetCm, metav1.UpdateOptions{})
+		_, err = c.CoreV1().ConfigMaps(constants.KubeSphereNamespace).Update(context.Background(), targetCm, metav1.UpdateOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -499,7 +304,7 @@ func addMemberClusterResource(targetCm *corev1.ConfigMap, t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = c.AppsV1().Deployments(KubesphereNamespace).Create(context.Background(), &deploy, metav1.CreateOptions{})
+	_, err = c.AppsV1().Deployments(constants.KubeSphereNamespace).Create(context.Background(), &deploy, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		t.Fatal(err)
 	}

@@ -1,6 +1,14 @@
+/*
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
+
 package v2
 
 import (
+	"sort"
+
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -34,11 +42,15 @@ func (r *registryer) ListRepositoryTags(src string) (RepositoryTags, error) {
 	if err != nil {
 		return RepositoryTags{}, err
 	}
+	sort.SliceStable(tags, func(i, j int) bool {
+		return i > j
+	})
 
 	return RepositoryTags{
 		Registry:   repo.RegistryStr(),
 		Repository: repo.RepositoryStr(),
 		Tags:       tags,
+		Total:      len(tags),
 	}, nil
 }
 

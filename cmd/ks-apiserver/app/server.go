@@ -1,54 +1,41 @@
 /*
-Copyright 2019 The KubeSphere Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
 
 package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
+	"github.com/google/gops/agent"
 	"github.com/spf13/cobra"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	cliflag "k8s.io/component-base/cli/flag"
-	"k8s.io/klog"
-
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 
 	"kubesphere.io/kubesphere/cmd/ks-apiserver/app/options"
-	apiserverconfig "kubesphere.io/kubesphere/pkg/apiserver/config"
+	"kubesphere.io/kubesphere/pkg/config"
+	"kubesphere.io/kubesphere/pkg/constants"
 	"kubesphere.io/kubesphere/pkg/utils/term"
 	"kubesphere.io/kubesphere/pkg/version"
 )
 
 func NewAPIServerCommand() *cobra.Command {
-	s := options.NewServerRunOptions()
-
-	// Load configuration from file
-	conf, err := apiserverconfig.TryLoadFromDisk()
-	if err == nil {
-		s = &options.ServerRunOptions{
-			GenericServerRunOptions: s.GenericServerRunOptions,
-			Config:                  conf,
-		}
+	s := options.NewAPIServerOptions()
+	if conf, err := config.TryLoadFromDisk(); err == nil {
+		s.Merge(conf)
 	} else {
-		klog.Fatal("Failed to load configuration from disk", err)
+		klog.Fatalf("Failed to load configuration from disk: %v", err)
 	}
 
 	cmd := &cobra.Command{
-		Use: "ks-apiserver",
+		Use: constants.KubeSphereAPIServerName,
 		Long: `The KubeSphere API server validates and configures data for the API objects. 
 The API Server services REST operations and provides the frontend to the
 cluster's shared state through which all other components interact.`,
@@ -57,7 +44,15 @@ cluster's shared state through which all other components interact.`,
 				return utilerrors.NewAggregate(errs)
 			}
 
-			return Run(s, signals.SetupSignalHandler())
+			if s.DebugMode {
+				// Add agent to report additional information such as the current stack trace, Go version, memory stats, etc.
+				// Bind to a random port on address 127.0.0.1.
+				if err := agent.Listen(agent.Options{}); err != nil {
+					klog.Fatalln(err)
+				}
+			}
+
+			return Run(signals.SetupSignalHandler(), s)
 		},
 		SilenceUsage: true,
 	}
@@ -71,7 +66,7 @@ cluster's shared state through which all other components interact.`,
 	usageFmt := "Usage:\n  %s\n"
 	cols, _, _ := term.TerminalSize(cmd.OutOrStdout())
 	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\n\n"+usageFmt, cmd.Long, cmd.UseLine())
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n\n"+usageFmt, cmd.Long, cmd.UseLine())
 		cliflag.PrintSections(cmd.OutOrStdout(), namedFlagSets, cols)
 	})
 
@@ -84,21 +79,21 @@ cluster's shared state through which all other components interact.`,
 	}
 
 	cmd.AddCommand(versionCmd)
-
 	return cmd
 }
 
-func Run(s *options.ServerRunOptions, ctx context.Context) error {
-
-	apiserver, err := s.NewAPIServer(ctx.Done())
+func Run(ctx context.Context, s *options.APIServerOptions) error {
+	apiServer, err := s.NewAPIServer(ctx)
 	if err != nil {
 		return err
 	}
 
-	err = apiserver.PrepareRun(ctx.Done())
-	if err != nil {
+	if err = apiServer.PrepareRun(ctx.Done()); err != nil {
 		return err
 	}
 
-	return apiserver.Run(ctx)
+	if errors.Is(apiServer.Run(ctx), http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }

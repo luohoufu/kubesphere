@@ -1,10 +1,22 @@
+/*
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
+
 package v2
 
 import (
-	"fmt"
-	"testing"
-
 	"encoding/base64"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gexec"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -109,3 +121,57 @@ func TestAuthn(t *testing.T) {
 		})
 	}
 }
+
+var (
+	registryServer    *httptest.Server
+	tlsRegistryServer *httptest.Server
+)
+
+func TestRegistry(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Registry Test Suite")
+}
+
+var _ = BeforeSuite(func() {
+	// anonymous registry
+	fakeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+	tlsRegistryServer = httptest.NewTLSServer(fakeHandler)
+	registryServer = httptest.NewServer(fakeHandler)
+})
+
+var _ = AfterSuite(func() {
+	By("tearing down the test environment")
+	gexec.KillAndWait(5 * time.Second)
+	registryServer.Close()
+	tlsRegistryServer.Close()
+})
+
+var _ = Describe("Registry", func() {
+	Context("Registry", func() {
+		It("skip TLS certification checks", func() {
+			secret := buildSecret(tlsRegistryServer.URL, "", "", true)
+			secretAuthenticator, err := NewSecretAuthenticator(secret)
+			Expect(err).Should(BeNil())
+			_, err = secretAuthenticator.Auth()
+			Expect(err).Should(BeNil())
+		})
+		It("self-signed certs are not trusted", func() {
+			secret := buildSecret(tlsRegistryServer.URL, "", "", false)
+			secretAuthenticator, err := NewSecretAuthenticator(secret)
+			Expect(err).Should(BeNil())
+			_, err = secretAuthenticator.Auth()
+			Expect(err).ShouldNot(BeNil())
+		})
+		It("insecure registry", func() {
+			// Loopback addr always be insecure, http scheme will be used.
+			secret := buildSecret(registryServer.URL, "", "", false)
+			secretAuthenticator, err := NewSecretAuthenticator(secret)
+			Expect(err).Should(BeNil())
+			_, err = secretAuthenticator.Auth()
+			Expect(err).Should(BeNil())
+		})
+	})
+})

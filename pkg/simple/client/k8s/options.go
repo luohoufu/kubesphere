@@ -1,18 +1,8 @@
 /*
-Copyright 2020 KubeSphere Authors
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
 
 package k8s
 
@@ -21,14 +11,11 @@ import (
 	"os/user"
 	"path"
 
-	"k8s.io/client-go/util/homedir"
-
 	"github.com/spf13/pflag"
-
-	"kubesphere.io/kubesphere/pkg/utils/reflectutils"
+	"k8s.io/client-go/util/homedir"
 )
 
-type KubernetesOptions struct {
+type Options struct {
 	// kubeconfig path, if not specified, will use
 	// in cluster way to create clientset
 	KubeConfig string `json:"kubeconfig" yaml:"kubeconfig"`
@@ -36,20 +23,20 @@ type KubernetesOptions struct {
 	// kubernetes apiserver public address, used to generate kubeconfig
 	// for downloading, default to host defined in kubeconfig
 	// +optional
-	Master string `json:"master,omitempty" yaml:"master"`
+	Master string `json:"master,omitempty" yaml:"master,omitempty"`
 
 	// kubernetes clientset qps
 	// +optional
-	QPS float32 `json:"qps,omitempty" yaml:"qps"`
+	QPS float32 `json:"qps,omitempty" yaml:"qps,omitempty"`
 
 	// kubernetes clientset burst
 	// +optional
-	Burst int `json:"burst,omitempty" yaml:"burst"`
+	Burst int `json:"burst,omitempty" yaml:"burst,omitempty"`
 }
 
 // NewKubernetesOptions returns a `zero` instance
-func NewKubernetesOptions() (option *KubernetesOptions) {
-	option = &KubernetesOptions{
+func NewKubernetesOptions() (option *Options) {
+	option = &Options{
 		QPS:   1e6,
 		Burst: 1e6,
 	}
@@ -70,8 +57,8 @@ func NewKubernetesOptions() (option *KubernetesOptions) {
 	return
 }
 
-func (k *KubernetesOptions) Validate() []error {
-	errors := []error{}
+func (k *Options) Validate() []error {
+	var errors []error
 
 	if k.KubeConfig != "" {
 		if _, err := os.Stat(k.KubeConfig); err != nil {
@@ -81,11 +68,7 @@ func (k *KubernetesOptions) Validate() []error {
 	return errors
 }
 
-func (k *KubernetesOptions) ApplyTo(options *KubernetesOptions) {
-	reflectutils.Override(options, k)
-}
-
-func (k *KubernetesOptions) AddFlags(fs *pflag.FlagSet, c *KubernetesOptions) {
+func (k *Options) AddFlags(fs *pflag.FlagSet, c *Options) {
 	fs.StringVar(&k.KubeConfig, "kubeconfig", c.KubeConfig, ""+
 		"Path for kubernetes kubeconfig file, if left blank, will use "+
 		"in cluster way.")

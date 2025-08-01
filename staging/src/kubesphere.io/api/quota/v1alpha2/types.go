@@ -1,18 +1,8 @@
 /*
-Copyright 2020 The KubeSphere Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
 
 package v1alpha2
 
@@ -27,19 +17,12 @@ const (
 	ResourcesPluralCluster   = "resourcequotas"
 )
 
-func init() {
-	SchemeBuilder.Register(&ResourceQuota{}, &ResourceQuotaList{})
-}
-
-// +genclient
-// +genclient:nonNamespaced
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-// +k8s:openapi-gen=true
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:categories="quota",scope="Cluster",path=resourcequotas
 // +kubebuilder:subresource:status
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-// WorkspaceResourceQuota sets aggregate quota restrictions enforced per workspace
+// +kubebuilder:object:root=true
+
+// ResourceQuota sets aggregate quota restrictions enforced per workspace
 type ResourceQuota struct {
 	metav1.TypeMeta `json:",inline"`
 	// +optional
@@ -83,7 +66,7 @@ type ResourceQuotaStatusByNamespace struct {
 }
 
 // +kubebuilder:object:root=true
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 // ResourceQuotaList is a list of WorkspaceResourceQuota items.
 type ResourceQuotaList struct {
 	metav1.TypeMeta `json:",inline"`

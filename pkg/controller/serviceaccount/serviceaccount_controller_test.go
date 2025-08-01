@@ -1,18 +1,8 @@
 /*
-Copyright 2019 The KubeSphere Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
 
 package serviceaccount
 
@@ -20,20 +10,18 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
+	iamv1beta1 "kubesphere.io/api/iam/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	iamv1alpha2 "kubesphere.io/api/iam/v1alpha2"
 
 	"kubesphere.io/kubesphere/pkg/utils/k8sutil"
 )
@@ -48,6 +36,7 @@ var _ = Describe("ServiceAccount", func() {
 		saName      = "test-serviceaccount"
 		saNamespace = "default"
 		saRole      = "test-role"
+		refRole     = "kubesphere:iam:test-role"
 	)
 	var role *rbacv1.Role
 	var sa *corev1.ServiceAccount
@@ -56,8 +45,11 @@ var _ = Describe("ServiceAccount", func() {
 	BeforeEach(func() {
 		role = &rbacv1.Role{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      saRole,
+				Name:      refRole,
 				Namespace: saNamespace,
+				Labels: map[string]string{
+					iamv1beta1.RoleReferenceLabel: saRole,
+				},
 			},
 		}
 
@@ -65,7 +57,7 @@ var _ = Describe("ServiceAccount", func() {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        saName,
 				Namespace:   saNamespace,
-				Annotations: map[string]string{iamv1alpha2.RoleAnnotation: saRole},
+				Annotations: map[string]string{iamv1beta1.RoleAnnotation: saRole},
 			},
 		}
 		req = ctrl.Request{
@@ -85,9 +77,8 @@ var _ = Describe("ServiceAccount", func() {
 			ctx := context.Background()
 
 			reconciler := &Reconciler{
-				Client:   fake.NewFakeClientWithScheme(scheme.Scheme),
-				logger:   ctrl.Log.WithName("controllers").WithName("acrpullbinding-controller"),
-				scheme:   scheme.Scheme,
+				Client:   fake.NewClientBuilder().WithScheme(scheme.Scheme).Build(),
+				logger:   ctrl.Log.WithName("controllers").WithName("serviceaccount"),
 				recorder: record.NewFakeRecorder(5),
 			}
 
@@ -100,24 +91,23 @@ var _ = Describe("ServiceAccount", func() {
 			By("Expecting to bind role successfully")
 			rolebindings := &rbacv1.RoleBindingList{}
 			Expect(func() bool {
-				reconciler.List(ctx, rolebindings, client.InNamespace(sa.Namespace), client.MatchingLabels{iamv1alpha2.ServiceAccountReferenceLabel: sa.Name})
+				_ = reconciler.List(ctx, rolebindings, client.InNamespace(sa.Namespace), client.MatchingLabels{iamv1beta1.ServiceAccountReferenceLabel: sa.Name})
 				return len(rolebindings.Items) == 1 && k8sutil.IsControlledBy(rolebindings.Items[0].OwnerReferences, "ServiceAccount", saName)
 			}()).Should(BeTrue())
 		})
 
-		It("Should report NotFound error when role doesn't exist", func() {
+		It("Should not report NotFound error when role doesn't exist", func() {
 			ctx := context.Background()
 
 			reconciler := &Reconciler{
-				Client:   fake.NewFakeClientWithScheme(scheme.Scheme),
-				logger:   ctrl.Log.WithName("controllers").WithName("acrpullbinding-controller"),
-				scheme:   scheme.Scheme,
+				Client:   fake.NewClientBuilder().WithScheme(scheme.Scheme).Build(),
+				logger:   ctrl.Log.WithName("controllers").WithName("serviceaccount"),
 				recorder: record.NewFakeRecorder(5),
 			}
 
 			Expect(reconciler.Create(ctx, sa)).Should(Succeed())
 			_, err := reconciler.Reconcile(ctx, req)
-			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+			Expect(err).Should(Succeed())
 		})
 	})
 })

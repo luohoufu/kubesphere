@@ -1,3 +1,9 @@
+/*
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
+
 package v2
 
 import (
@@ -13,8 +19,7 @@ import (
 const (
 	// DefaultRegistry is the registry name that will be used if no registry
 	// provided and the default is not overridden.
-	DefaultRegistry      = "index.docker.io"
-	defaultRegistryAlias = "docker.io"
+	DefaultRegistry = "index.docker.io"
 
 	// DefaultTag is the tag name that will be used if no tag provided and the
 	// default is not overridden.
@@ -57,7 +62,6 @@ func Insecure(o *options) {
 
 // WithAuth is a functional option for overriding the default authenticator
 // for remote operations.
-//
 func WithAuth(auth authn.Authenticator) Option {
 	return func(o *options) {
 		// Replace the default keychain at position 0.

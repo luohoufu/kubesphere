@@ -14,22 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 set -o errexit
 set -o nounset
 set -o pipefail
 
-. "$(dirname "${BASH_SOURCE[0]}")/lib/init.sh"
+KUBE_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
+source "${KUBE_ROOT}/hack/lib/init.sh"
 
-cd "${KUBE_ROOT}/hack" || exit 1
+kube::golang::setup_env
 
-if ! command -v goimports &> /dev/null
-then
-    echo "goimports could not be found on your machine, please install it first"
-    exit
+if ! command -v goimports ; then
+  # Install goimports
+  echo 'installing goimports'
+  go install -mod=mod golang.org/x/tools/cmd/goimports@v0.33.0
 fi
 
 cd "${KUBE_ROOT}" || exit 1
 
-IFS=$'\n' read -r -d '' -a files < <( find . -type f -name '*.go' -not -path "./vendor/*" -not -path "./pkg/client/*" && printf '\0' )
+IFS=$'\n' read -r -d '' -a files < <( find . -type f -name '*.go' -not -path "./vendor/*" -not -path "./_output/*" -not -name "zz_generated.deepcopy.go" && printf '\0' )
 
-"goimports" -w -local kubesphere.io/kubesphere "${files[@]}"
+goimports -w -local kubesphere.io/kubesphere "${files[@]}"

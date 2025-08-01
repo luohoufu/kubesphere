@@ -1,55 +1,106 @@
 /*
-Copyright 2020 The KubeSphere Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
 
 package v1alpha2
 
 import (
-	"github.com/emicklei/go-restful"
+	restfulspec "github.com/emicklei/go-restful-openapi/v2"
+	"github.com/emicklei/go-restful/v3"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	clusterv1alpha1 "kubesphere.io/api/cluster/v1alpha1"
 
-	kubesphereconfig "kubesphere.io/kubesphere/pkg/apiserver/config"
+	"kubesphere.io/kubesphere/pkg/api"
 	"kubesphere.io/kubesphere/pkg/apiserver/runtime"
 )
 
 const (
-	GroupName = "config.kubesphere.io"
+	GroupName  = "config.kubesphere.io"
+	Version    = "v1alpha2"
+	APIVersion = GroupName + "/" + Version
 )
 
-var GroupVersion = schema.GroupVersion{Group: GroupName, Version: "v1alpha2"}
+var GroupVersion = schema.GroupVersion{Group: GroupName, Version: Version}
 
-func AddToContainer(c *restful.Container, config *kubesphereconfig.Config) error {
+func (h *handler) AddToContainer(c *restful.Container) error {
 	webservice := runtime.NewWebService(GroupVersion)
-
-	webservice.Route(webservice.GET("/configs/oauth").
-		Doc("Information about the authorization server are published.").
-		To(func(request *restful.Request, response *restful.Response) {
-			response.WriteEntity(config.AuthenticationOptions.OAuthOptions)
-		}))
-
 	webservice.Route(webservice.GET("/configs/configz").
-		Doc("Information about the server configuration").
-		To(func(request *restful.Request, response *restful.Response) {
-			response.WriteAsJson(config.ToMap())
-		}))
+		Deprecate().
+		Doc("Retrieve multicluster configuration").
+		Notes("Provides information about the multicluster configuration.").
+		Operation("getMulticlusterConfiguration").
+		To(h.getConfigz))
 
-	webservice.Route(webservice.GET("/configs/gpu/kinds").
-		Doc("Get all supported GPU kinds.").
-		To(func(request *restful.Request, response *restful.Response) {
-			response.WriteAsJson(config.GPUOptions.Kinds)
-		}))
+	if h.config.MultiClusterOptions.ClusterRole == string(clusterv1alpha1.ClusterRoleHost) {
+		webservice.Route(webservice.GET("/configs/oauth").
+			Doc("Retrieve OAuth configuration").
+			Notes("Provides information about the authorization server.").
+			Operation("getOAuthConfiguration").
+			To(h.getOAuthConfiguration))
+
+		webservice.Route(webservice.GET("/configs/theme").
+			Doc("Retrieve the current theme configuration").
+			Notes("Provides the current theme configuration details.").
+			Operation("getThemeConfiguration").
+			To(h.getThemeConfiguration))
+
+		webservice.Route(webservice.PUT("/configs/theme").
+			Doc("Update the theme configuration settings").
+			Notes("Allows the user to update the theme configuration settings.").
+			Operation("updateThemeConfiguration").
+			To(h.updateThemeConfiguration))
+
+		webservice.Route(webservice.GET("/clusterconnectionconfigurations").
+			Doc("Retrieve all configurations for cluster connection").
+			Notes("Provides information about all cluster connection plugins").
+			Operation("listClusterConnectionConfiguration").
+			To(h.listClusterConnectionConfiguration))
+
+		webservice.Route(webservice.GET("/clusterconnectionconfigurations/{config}").
+			Doc("Retrieve the configuration for cluster connection").
+			Notes("Provides information about the cluster connection plugin").
+			Operation("getClusterConnectionConfiguration").
+			To(h.getClusterConnectionConfiguration))
+
+		webservice.Route(webservice.POST("/platformconfigs").
+			Doc("Create a new platform configuration").
+			Notes("Allows the user to create a new configuration for the specified platform.").
+			Operation("createPlatformConfiguration").
+			To(h.createPlatformConfiguration))
+
+		webservice.Route(webservice.DELETE("/platformconfigs/{config}").
+			Doc("Delete the specified platform configuration").
+			Notes("Allows the user to delete the configuration settings of the specified platform.").
+			Operation("deletePlatformConfiguration").
+			To(h.deletePlatformConfiguration))
+
+		webservice.Route(webservice.PUT("/platformconfigs/{config}").
+			Doc("Update the specified platform configuration settings").
+			Notes("Allows the user to modify the configuration settings of the specified platform").
+			Operation("updatePlatformConfiguration").
+			To(h.updatePlatformConfiguration))
+
+		webservice.Route(webservice.PATCH("/platformconfigs/{config}").
+			Doc("Patch the specified platform configuration settings").
+			Consumes(runtime.MimeMergePatchJson).
+			Notes("Allows the user to apply partial modifications to the configuration settings of the specified platform").
+			Operation("patchPlatformConfiguration").
+			To(h.patchPlatformConfiguration))
+
+		webservice.Route(webservice.GET("/platformconfigs/{config}").
+			Doc("Retrieve the specified platform configuration").
+			Notes("Provides details of the specified platform configuration.").
+			Operation("getPlatformConfiguration").
+			To(h.getPlatformConfiguration))
+	}
+
+	for _, route := range webservice.Routes() {
+		route.Metadata = map[string]interface{}{
+			restfulspec.KeyOpenAPITags: []string{api.TagPlatformConfigurations},
+		}
+	}
 
 	c.Add(webservice)
 	return nil

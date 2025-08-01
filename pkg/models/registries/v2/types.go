@@ -1,3 +1,9 @@
+/*
+ * Copyright 2024 the KubeSphere Authors.
+ * Please refer to the LICENSE file in the root directory of the project.
+ * https://github.com/kubesphere/kubesphere/blob/master/LICENSE
+ */
+
 package v2
 
 import (
@@ -29,6 +35,7 @@ type RepositoryTags struct {
 	Registry   string   `json:"registry"`
 	Repository string   `json:"repository"`
 	Tags       []string `json:"tags"`
+	Total      int      `json:"total"`
 }
 
 // ImageConfig wraps v1.ConfigFile to avoid direct dependency
